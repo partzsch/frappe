@@ -78,7 +78,7 @@ def compress(data, args = {}):
 
 	if not data: return data
 	values = []
-	keys = data[0].keys()
+	keys = list(data[0])
 	for row in data:
 		new_row = []
 		for key in keys:
@@ -217,15 +217,19 @@ def delete_items():
 	il = json.loads(frappe.form_dict.get('items'))
 	doctype = frappe.form_dict.get('doctype')
 
+	failed = []
+
 	for i, d in enumerate(il):
 		try:
 			frappe.delete_doc(doctype, d)
 			if len(il) >= 5:
 				frappe.publish_realtime("progress",
-					dict(progress=[i+1, len(il)], title=_('Deleting {0}').format(doctype)),
-					user=frappe.session.user)
+					dict(progress=[i+1, len(il)], title=_('Deleting {0}').format(doctype), description=d),
+						user=frappe.session.user)
 		except Exception:
-			pass
+			failed.append(d)
+
+	return failed
 
 @frappe.whitelist()
 def get_sidebar_stats(stats, doctype, filters=[]):

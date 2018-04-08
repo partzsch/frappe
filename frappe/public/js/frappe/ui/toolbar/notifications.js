@@ -3,7 +3,6 @@ frappe.provide("frappe.ui.notifications");
 frappe.ui.notifications = {
 	config: {
 		"ToDo": { label: __("To Do") },
-		"Chat": { label: __("Chat"), route: "chat"},
 		"Event": { label: __("Calendar"), route: "List/Event/Calendar" },
 		"Email": { label: __("Email"), route: "List/Communication/Inbox" },
 		"Likes": { label: __("Likes"),
@@ -111,8 +110,6 @@ frappe.ui.notifications = {
 		}
 		let route = frappe.get_route();
 		if(route[0]==="List" && route[1]===doctype) {
-			frappe.pages["List/" + doctype].list_view.refresh();
-		} else {
 			frappe.set_route("List", doctype);
 		}
 	},

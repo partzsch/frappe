@@ -169,8 +169,6 @@ def get():
 		# check only when clear cache is done, and don't cache this
 		if frappe.local.request:
 			bootinfo["change_log"] = get_change_log()
-			bootinfo["in_setup_wizard"] = not cint(frappe.db.get_single_value('System Settings', 'setup_complete'))
-			bootinfo["is_first_startup"] = cint(frappe.db.get_single_value('System Settings', 'is_first_startup'))
 
 	bootinfo["metadata_version"] = frappe.cache().get_value("metadata_version")
 	if not bootinfo["metadata_version"]:
@@ -417,11 +415,17 @@ def get_expiry_period(device="desktop"):
 
 def get_geo_from_ip(ip_addr):
 	try:
-		from geoip import geolite2
-		return geolite2.lookup(ip_addr)
+		from geolite2 import geolite2
+		with geolite2 as f:
+			reader = f.reader()
+			data   = reader.get(ip_addr)
+
+			return frappe._dict(data)
 	except ImportError:
 		return
 	except ValueError:
+		return
+	except TypeError:
 		return
 
 def get_geo_ip_country(ip_addr):

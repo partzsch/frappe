@@ -10,6 +10,13 @@ frappe.request.waiting_for_ajax = [];
 
 // generic server call (call page, object)
 frappe.call = function(opts) {
+	if (!frappe.is_online()) {
+		frappe.show_alert({
+			indicator: 'orange',
+			message: __('You are not connected to Internet. Retry after sometime.')
+		}, 3);
+		return;
+	}
 	if (typeof arguments[0]==='string') {
 		opts = {
 			method: arguments[0],
@@ -362,7 +369,7 @@ frappe.request.report_error = function(xhr, request_opts) {
 
 		request_opts = frappe.request.cleanup_request_opts(request_opts);
 
-		msg_dialog = frappe.msgprint({message:error_message, indicator:'red'});
+		window.msg_dialog = frappe.msgprint({message:error_message, indicator:'red'});
 
 		msg_dialog.msg_area.find(".report-btn")
 			.toggle(error_report_email ? true : false)

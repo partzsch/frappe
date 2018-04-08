@@ -12,10 +12,13 @@ import frappe.defaults
 import frappe.async
 import re
 import frappe.model.meta
-from frappe.utils import now, get_datetime, cstr
+from frappe.utils import now, get_datetime, cstr, cast_fieldtype
 from frappe import _
 from frappe.model.utils.link_count import flush_local_link_count
+from frappe.model.utils import STANDARD_FIELD_CONVERSION_MAP
 from frappe.utils.background_jobs import execute_job, get_queue
+from frappe import as_unicode
+import six
 
 # imports - compatibility imports
 from six import (
@@ -33,13 +36,29 @@ from pymysql.constants 	import ER, FIELD_TYPE
 from pymysql.converters import conversions
 import pymysql
 
+# Helpers
+def _cast_result(doctype, result):
+	batch = [ ]
+
+	try:
+		for field, value in result:
+			df = frappe.get_meta(doctype).get_field(field)
+			if df:
+				value = cast_fieldtype(df.fieldtype, value)
+
+			batch.append(tuple([field, value]))
+	except frappe.exceptions.DoesNotExistError:
+		return result
+
+	return tuple(batch)
+
 class Database:
 	"""
 	   Open a database connection with the given parmeters, if use_default is True, use the
 	   login details from `conf.py`. This is called by the request handler and is accessible using
 	   the `db` global variable. the `sql` method is also global to run queries
 	"""
-	def __init__(self, host=None, user=None, password=None, ac_name=None, use_default = 0):
+	def __init__(self, host=None, user=None, password=None, ac_name=None, use_default = 0, local_infile = 0):
 		self.host = host or frappe.conf.db_host or 'localhost'
 		self.user = user or frappe.conf.db_name
 		self._conn = None
@@ -55,6 +74,12 @@ class Database:
 
 		self.password = password or frappe.conf.db_password
 		self.value_cache = {}
+
+		# this param is to load CSV's with LOCAL keyword.
+		# it can be set in site_config as > bench set-config local_infile 1
+		# once the local-infile is set on MySql Server, the client needs to connect with this option
+		# Connections without this option leads to: 'The used command is not allowed with this MariaDB version' error
+		self.local_infile = local_infile or frappe.conf.local_infile
 
 	def get_db_login(self, ac_name):
 		return ac_name
@@ -74,16 +99,20 @@ class Database:
 		conversions.update({
 			FIELD_TYPE.NEWDECIMAL: float,
 			FIELD_TYPE.DATETIME: get_datetime,
-			TimeDelta: conversions[binary_type],
 			UnicodeWithAttrs: conversions[text_type]
 		})
 
+		if six.PY2:
+			conversions.update({
+				TimeDelta: conversions[binary_type]
+			})
+
 		if usessl:
 			self._conn = pymysql.connect(self.host, self.user or '', self.password or '',
-				charset='utf8mb4', use_unicode = True, ssl=self.ssl, conv = conversions)
+				charset='utf8mb4', use_unicode = True, ssl=self.ssl, conv = conversions, local_infile = self.local_infile)
 		else:
 			self._conn = pymysql.connect(self.host, self.user or '', self.password or '',
-				charset='utf8mb4', use_unicode = True, conv = conversions)
+				charset='utf8mb4', use_unicode = True, conv = conversions, local_infile = self.local_infile)
 
 		# MYSQL_OPTION_MULTI_STATEMENTS_OFF = 1
 		# # self._conn.set_server_option(MYSQL_OPTION_MULTI_STATEMENTS_OFF)
@@ -532,6 +561,7 @@ class Database:
 				from tabSingles where field in (%s) and doctype=%s""" \
 					% (', '.join(['%s'] * len(fields)), '%s'),
 					tuple(fields) + (doctype,), as_dict=False, debug=debug)
+			# r = _cast_result(doctype, r)
 
 			if as_dict:
 				if r:
@@ -544,7 +574,7 @@ class Database:
 			else:
 				return r and [[i[1] for i in r]] or []
 
-	def get_singles_dict(self, doctype):
+	def get_singles_dict(self, doctype, debug = False):
 		"""Get Single DocType as dict.
 
 		:param doctype: DocType of the single object whose value is requested
@@ -554,9 +584,16 @@ class Database:
 			# Get coulmn and value of the single doctype Accounts Settings
 			account_settings = frappe.db.get_singles_dict("Accounts Settings")
 		"""
+		result = self.sql("""
+			SELECT field, value
+			FROM   `tabSingles`
+			WHERE  doctype = %s
+		""", doctype)
+		# result = _cast_result(doctype, result)
 
-		return frappe._dict(self.sql("""select field, value from
-			tabSingles where doctype=%s""", doctype))
+		dict_  = frappe._dict(result)
+
+		return dict_
 
 	def get_all(self, *args, **kwargs):
 		return frappe.get_all(*args, **kwargs)
@@ -577,7 +614,7 @@ class Database:
 		"""
 
 		value = self.value_cache.setdefault(doctype, {}).get(fieldname)
-		if value:
+		if value is not None:
 			return value
 
 		val = self.sql("""select value from
@@ -679,7 +716,7 @@ class Database:
 
 		else:
 			# for singles
-			keys = to_update.keys()
+			keys = list(to_update)
 			self.sql('''
 				delete from tabSingles
 				where field in ({0}) and
@@ -898,10 +935,8 @@ class Database:
 
 	def escape(self, s, percent=True):
 		"""Excape quotes and percent in given string."""
-		if isinstance(s, text_type):
-			s = (s or "").encode("utf-8")
-
-		s = text_type(pymysql.escape_string(s), "utf-8").replace("`", "\\`")
+		# pymysql expects unicode argument to escape_string with Python 3
+		s = as_unicode(pymysql.escape_string(as_unicode(s)), "utf-8").replace("`", "\\`")
 
 		# NOTE separating % escape, because % escape should only be done when using LIKE operator
 		# or when you use python format string to generate query that already has a %s

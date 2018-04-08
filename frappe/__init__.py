@@ -9,6 +9,9 @@ from __future__ import unicode_literals, print_function
 from six import iteritems, binary_type, text_type, string_types
 from werkzeug.local import Local, release_local
 import os, sys, importlib, inspect, json
+from past.builtins import cmp
+
+from faker import Faker
 
 # public
 from .exceptions import *
@@ -270,6 +273,7 @@ def msgprint(msg, title=None, raise_exception=0, as_table=False, indicator=None,
 	"""
 	from frappe.utils import encode
 
+	msg = safe_decode(msg)
 	out = _dict(message=msg)
 
 	def _raise_exception():
@@ -279,9 +283,9 @@ def msgprint(msg, title=None, raise_exception=0, as_table=False, indicator=None,
 			import inspect
 
 			if inspect.isclass(raise_exception) and issubclass(raise_exception, Exception):
-				raise raise_exception(encode(msg))
+				raise raise_exception(msg)
 			else:
-				raise ValidationError(encode(msg))
+				raise ValidationError(msg)
 
 	if flags.mute_messages:
 		_raise_exception()
@@ -1411,3 +1415,97 @@ def get_system_settings(key):
 def get_active_domains():
 	from frappe.core.doctype.domain_settings.domain_settings import get_active_domains
 	return get_active_domains()
+
+def get_version(doctype, name, limit = None, head = False, raise_err = True):
+	'''
+	Returns a list of version information of a given DocType (Applicable only if DocType has changes tracked).
+
+	Example
+	>>> frappe.get_version('User', 'foobar@gmail.com')
+	>>>
+	[
+		{
+			 "version": [version.data], 	 # Refer Version DocType get_diff method and data attribute
+			    "user": "admin@gmail.com"    # User that created this version
+			"creation": <datetime.datetime>  # Creation timestamp of that object.
+		}
+	]
+	'''
+	meta  = get_meta(doctype)
+	if meta.track_changes:
+		names = db.sql("""
+			SELECT name from tabVersion
+			WHERE  ref_doctype = '{doctype}' AND docname = '{name}'
+			{order_by}
+			{limit}
+		""".format(
+			doctype  = doctype,
+			name     = name,
+			order_by = 'ORDER BY creation'	 			     if head  else '',
+			limit    = 'LIMIT {limit}'.format(limit = limit) if limit else ''
+		))
+
+		from frappe.chat.util import squashify, dictify, safe_json_loads
+
+		versions = [ ]
+
+		for name in names:
+			name = squashify(name)
+			doc  = get_doc('Version', name)
+
+			data = doc.data
+			data = safe_json_loads(data)
+			data = dictify(dict(
+				version  = data,
+				user 	 = doc.owner,
+				creation = doc.creation
+			))
+
+			versions.append(data)
+
+		return versions
+	else:
+		if raise_err:
+			raise ValueError('{doctype} has no versions tracked.'.format(
+				doctype = doctype
+			))
+
+@whitelist(allow_guest = True)
+def ping():
+	return "pong"
+
+
+def safe_encode(param, encoding = 'utf-8'):
+	try:
+		param = param.encode(encoding)
+	except Exception:
+		pass
+	return param
+
+
+def safe_decode(param, encoding = 'utf-8'):
+	try:
+		param = param.decode(encoding)
+	except Exception:
+		pass
+	return param
+	
+def parse_json(val):
+	from frappe.utils import parse_json
+	return parse_json(val)
+
+def mock(type, size = 1, locale = 'en'):
+	results = [ ]
+	faker 	= Faker(locale)
+	if not type in dir(faker):
+		raise ValueError('Not a valid mock type.')
+	else:
+		for i in range(size):
+			data = getattr(faker, type)()
+			results.append(data)
+
+	from frappe.chat.util import squashify
+		
+	results = squashify(results)
+
+	return results

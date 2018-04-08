@@ -16,6 +16,7 @@ from frappe.custom.doctype.property_setter.property_setter import make_property_
 from frappe.desk.notifications import delete_notification_count_for
 from frappe.modules import make_boilerplate
 from frappe.model.db_schema import validate_column_name, validate_column_length, type_map
+from frappe.model.docfield import supports_translation
 import frappe.website.render
 
 # imports - third-party imports
@@ -56,6 +57,7 @@ class DocType(Document):
 
 		self.scrub_field_names()
 		self.set_default_in_list_view()
+		self.set_default_translatable()
 		self.validate_series()
 		self.validate_document_type()
 		validate_fields(self)
@@ -87,6 +89,12 @@ class DocType(Document):
 					d.in_list_view = 1
 					cnt += 1
 					if cnt == 4: break
+
+	def set_default_translatable(self):
+		'''Ensure that non-translatable never will be translatable'''
+		for d in self.fields:
+			if d.translatable and not supports_translation(d.fieldtype):
+				d.translatable = 0
 
 	def check_developer_mode(self):
 		"""Throw exception if not developer mode or via patch"""
@@ -146,7 +154,7 @@ class DocType(Document):
 		if self.has_web_view:
 			# route field must be present
 			if not 'route' in [d.fieldname for d in self.fields]:
-				frappe.throw('Field "route" is mandatory for Web Views', title='Missing Field')
+				frappe.throw(_('Field "route" is mandatory for Web Views'), title='Missing Field')
 
 			# clear website cache
 			frappe.website.render.clear_cache()
@@ -709,11 +717,7 @@ def validate_permissions(doctype, for_remove=False):
 		similar_because_of = ""
 		for p in permissions:
 			if p.role==d.role and p.permlevel==d.permlevel and p!=d:
-				if p.apply_user_permissions==d.apply_user_permissions:
-					has_similar = True
-					similar_because_of = _("Apply User Permissions")
-					break
-				elif p.if_owner==d.if_owner:
+				if p.if_owner==d.if_owner:
 					similar_because_of = _("If Owner")
 					has_similar = True
 					break
@@ -758,8 +762,7 @@ def validate_permissions(doctype, for_remove=False):
 			d.set("export", 0)
 
 		for ptype, label in (
-			("set_user_permissions", _("Set User Permissions")),
-			("apply_user_permissions", _("Apply User Permissions"))):
+			("set_user_permissions", _("Set User Permissions"))):
 			if d.get(ptype):
 				d.set(ptype, 0)
 				frappe.msgprint(_("{0} cannot be set for Single types").format(label))
